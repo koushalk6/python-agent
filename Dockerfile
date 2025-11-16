@@ -1,4 +1,5 @@
 
+
 # Use Debian slim (stable for building aiortc)
 FROM python:3.10-slim
 
@@ -24,21 +25,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Copy requirements first for caching
+# Copy requirements first (Build cache optimisation)
 COPY requirements.txt /app/requirements.txt
 
-# Install python deps
+# Install Python deps
 RUN pip install --upgrade pip
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
-# Copy app
+# Copy entire project
 COPY . /app
 
 # Expose Cloud Run port
 EXPOSE 8080
 
-# Run the python service (aiohttp web.run_app will bind to $PORT)
+# Start the python service
 CMD ["python", "python_service.py"]
+
+
 
 
 
