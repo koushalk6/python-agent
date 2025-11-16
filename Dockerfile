@@ -1,10 +1,10 @@
-# Debian Slim - Best for aiortc
+# Use Debian slim for compatibility
 FROM python:3.10-slim
 
 ENV PYTHONUNBUFFERED=1
 ENV PORT=8080
 
-# Install dependencies required by aiortc & av
+# Install system libraries needed by aiortc + av
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     pkg-config \
@@ -19,16 +19,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libopus-dev \
     libvpx-dev \
     libssl-dev \
+    libffi-dev \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Copy and install dependencies
-COPY requirements.txt .
+# Install python dependencies separately for caching
+COPY requirements.txt /app/requirements.txt
+RUN pip install --upgrade pip
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy entire app
-COPY . .
+# Copy app code
+COPY . /app
 
 EXPOSE 8080
 
