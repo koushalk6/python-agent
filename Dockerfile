@@ -1,27 +1,25 @@
-# Use official Python image
 FROM python:3.11-slim
 
 # Install system dependencies for aiortc
 RUN apt-get update && apt-get install -y \
-    ffmpeg libavformat-dev libavcodec-dev libavutil-dev libavdevice-dev \
+    ffmpeg \
+    libavformat-dev libavcodec-dev libavutil-dev libavdevice-dev \
+    libavfilter-dev libswscale-dev \
+    libopus-dev libvpx-dev \
+    libssl-dev libffi-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Set working directory
 WORKDIR /app
 
-# Copy code
 COPY python_service.py .
+COPY requirements.txt .
 
-# Install Python dependencies
-RUN pip install --no-cache-dir aiohttp requests aiortc
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Expose port (Cloud Run listens on $PORT)
-ENV PORT 8080
+ENV PORT=8080
 EXPOSE 8080
 
-# Command to run
 CMD ["python", "python_service.py"]
-
 
 
 
