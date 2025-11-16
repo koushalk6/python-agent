@@ -1,37 +1,28 @@
-# Use Debian slim for compatibility
-FROM python:3.10-slim
+# Lightweight Python image
+FROM python:3.11-slim
 
 ENV PYTHONUNBUFFERED=1
 ENV PORT=8080
 
-# Install system libraries needed by aiortc + av
+# Install minimal system tools
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
-    pkg-config \
-    ffmpeg \
-    libavformat-dev \
-    libavcodec-dev \
-    libavdevice-dev \
-    libavutil-dev \
-    libswscale-dev \
-    libswresample-dev \
-    libv4l-dev \
-    libopus-dev \
-    libvpx-dev \
-    libssl-dev \
-    libffi-dev \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Install python dependencies separately for caching
+# Copy requirements first (for caching)
 COPY requirements.txt /app/requirements.txt
-RUN pip install --upgrade pip
-RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy app code
+# Install python dependencies
+RUN pip install --upgrade pip
+RUN pip install --no-cache-dir -r /app/requirements.txt
+
+# Copy app source
 COPY . /app
 
+# Expose port for Cloud Run
 EXPOSE 8080
 
+# Start service
 CMD ["python", "python_service.py"]
