@@ -9,8 +9,8 @@ import requests
 from aiohttp import web
 from google.cloud import firestore  # pip install google-cloud-firestore
 
-WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN", "").strip()
-PHONE_NUMBER_ID = os.getenv("PHONE_NUMBER_ID", "").strip()
+WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN", "EAAzIG7LU0TYBO4EsZCcETbfEgZAW79NJFQZCh3RJ5Y182q0CQVj0ELcdoEkgZCf3blKWbuCLdKtZBIKEOZAbh6x0RpdcXPEoSl2wxe8D1OUjpEvyz2O3eakLUqHQDLXbie3wcy9QJuFHaVLjxa1SHmutNdZCQvxM4MFqZB6ZCUdWdUJ8CueRn4LKZClBBZABcuqPHZAOHgZDZD").strip()
+PHONE_NUMBER_ID = os.getenv("PHONE_NUMBER_ID", "732355239960210").strip()
 GRAPH = "https://graph.facebook.com/v20.0"
 
 # Firestore client
