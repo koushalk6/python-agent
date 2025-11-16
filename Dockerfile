@@ -1,8 +1,9 @@
-FROM python:3.10-slim
+FROM python:3.11-slim
 
 ENV PYTHONUNBUFFERED=1
 ENV PORT=8080
 
+# Minimal system packages
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     libssl-dev \
@@ -10,11 +11,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
+# Copy requirements first for cache
 COPY requirements.txt /app/requirements.txt
-
 RUN pip install --upgrade pip
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r /app/requirements.txt
 
+# Copy app
 COPY . /app
 
 EXPOSE 8080
