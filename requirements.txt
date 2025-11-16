@@ -1,4 +1,7 @@
 aiohttp
-requests
 aiortc
-google-cloud-texttospeech
+requests
+av
+numpy
+pydantic
+aiofiles
