@@ -1,27 +1,25 @@
 
-
-# python_service.py
 import os
 import json
 import asyncio
 import traceback
-import requests
 from aiohttp import web
-from google.cloud import firestore  # pip install google-cloud-firestore
+from google.cloud import firestore
+import requests
 
-WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN", "EAAzIG7LU0TYBO4EsZCcETbfEgZAW79NJFQZCh3RJ5Y182q0CQVj0ELcdoEkgZCf3blKWbuCLdKtZBIKEOZAbh6x0RpdcXPEoSl2wxe8D1OUjpEvyz2O3eakLUqHQDLXbie3wcy9QJuFHaVLjxa1SHmutNdZCQvxM4MFqZB6ZCUdWdUJ8CueRn4LKZClBBZABcuqPHZAOHgZDZD").strip()
-PHONE_NUMBER_ID = os.getenv("PHONE_NUMBER_ID", "732355239960210").strip()
+# ---------- ENVIRONMENT ----------
+WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN")
+PHONE_NUMBER_ID = os.getenv("PHONE_NUMBER_ID")
 GRAPH = "https://graph.facebook.com/v23.0"
 
-# Firestore client
+# ---------- FIRESTORE ----------
 db = firestore.Client()
 
-# Public audio URL fallback (silent short audio)
+# ---------- AUDIO (optional filler audio) ----------
 AUDIO_URL = "https://samplelib.com/lib/preview/wav/sample-3s.wav"
 
-# Max time to keep call alive (seconds)
-CALL_KEEP_ALIVE = 50
 
+# ---------- Simple SDP generator ----------
 def make_fake_sdp():
     return (
         "v=0\r\n"
@@ -32,187 +30,149 @@ def make_fake_sdp():
         "c=IN IP4 0.0.0.0\r\n"
     )
 
+
+# ---------- Firestore Async Logger ----------
 async def log_firestore(call_id, event, extra=None):
     try:
-        doc = {
-            "call_id": call_id,
-            "event": event,
-            "extra": extra or {},
-            "timestamp": firestore.SERVER_TIMESTAMP
-        }
-        await asyncio.to_thread(db.collection("whatsappCalls").add, doc)
+        await asyncio.to_thread(
+            db.collection("whatsappCalls").add,
+            {
+                "call_id": call_id,
+                "event": event,
+                "extra": extra or {},
+                "timestamp": firestore.SERVER_TIMESTAMP,
+            },
+        )
     except Exception as e:
-        print(f"[log_firestore] error: {e}")
+        print("Firestore log error:", e)
 
+
+# ---------- MAIN CALL HANDLER ----------
 async def handle_call(call):
     try:
         if not isinstance(call, dict):
-            print("Bad payload (not dict).")
+            print("Bad payload, skipping")
             return
 
         event = call.get("event")
-        call_id = call.get("id") or call.get("call_id") or call.get("waba_call_id")
-        session = call.get("session", {}) or {}
-        print(f"[handle_call] event: {event} id: {call_id}")
+        call_id = call.get("id") or call.get("call_id")
+        session = call.get("session", {})
+
+        print(f"[CALL] event={event} call_id={call_id}")
         await log_firestore(call_id, f"received_{event}", call)
 
+        # We process only these events
         if event not in ("connect", "offer", "incoming"):
-            print(f"[handle_call] ignoring event: {event}")
             return
 
-        incoming_sdp = session.get("sdp") or session.get("offer") or None
+        incoming_sdp = session.get("sdp") or session.get("offer")
 
-        use_aiortc = False
+        # --------- TRY AIORTC ---------
         try:
             from aiortc import RTCPeerConnection, RTCSessionDescription, MediaPlayer
             use_aiortc = True
-            print("[handle_call] aiortc imported successfully.")
-        except Exception as e:
-            print(f"[handle_call] aiortc not available, fallback: {e}")
+        except:
+            use_aiortc = False
 
+        # ---------- FULL AIORTC PATH ----------
         if use_aiortc and incoming_sdp:
-            pc = RTCPeerConnection()
-
             try:
-                player = MediaPlayer(AUDIO_URL)
-                if player.audio:
-                    pc.addTrack(player.audio)
-                    print("[handle_call] added MediaPlayer audio track")
-            except Exception as e:
-                print(f"[handle_call] MediaPlayer init failed: {e}")
+                pc = RTCPeerConnection()
 
-            offer = RTCSessionDescription(sdp=incoming_sdp, type="offer")
-            await pc.setRemoteDescription(offer)
-            answer = await pc.createAnswer()
-            await pc.setLocalDescription(answer)
-            local_sdp = pc.localDescription.sdp
-            print(f"[handle_call] generated SDP answer length: {len(local_sdp)}")
+                # Add audio output track
+                try:
+                    player = MediaPlayer(AUDIO_URL)
+                    if player.audio:
+                        pc.addTrack(player.audio)
+                except Exception as e:
+                    print("Audio load failed:", e)
 
-            # Pre-accept
-            try:
-                r = requests.post(
+                offer = RTCSessionDescription(sdp=incoming_sdp, type="offer")
+                await pc.setRemoteDescription(offer)
+
+                answer = await pc.createAnswer()
+                await pc.setLocalDescription(answer)
+                sdp_answer = pc.localDescription.sdp
+
+                # Send pre-accept
+                requests.post(
                     f"{GRAPH}/{PHONE_NUMBER_ID}/calls",
                     headers={"Authorization": f"Bearer {WHATSAPP_TOKEN}"},
                     json={
                         "messaging_product": "whatsapp",
                         "call_id": call_id,
                         "action": "pre_accept",
-                        "session": {"sdp_type": "answer", "sdp": local_sdp}
+                        "session": {"sdp_type": "answer", "sdp": sdp_answer},
                     },
                     timeout=10,
                 )
-                print(f"[handle_call] pre_accept response: {r.status_code}")
-                await log_firestore(call_id, "pre_accept", {"status": r.status_code})
+
+                # No ICE needed for WhatsApp → immediately accept
+                requests.post(
+                    f"{GRAPH}/{PHONE_NUMBER_ID}/calls",
+                    headers={"Authorization": f"Bearer {WHATSAPP_TOKEN}"},
+                    json={
+                        "messaging_product": "whatsapp",
+                        "call_id": call_id,
+                        "action": "accept",
+                        "session": {"sdp_type": "answer", "sdp": sdp_answer},
+                    },
+                    timeout=10,
+                )
+
+                await pc.close()
+                await log_firestore(call_id, "completed_aiortc")
+                return
+
             except Exception as e:
-                print(f"[handle_call] pre_accept POST failed: {e}")
-                await log_firestore(call_id, "pre_accept_error", {"error": str(e)})
+                print("AIORTC failed:", e)
 
-            # Accept once ICE connected or timeout
-            async def try_accept():
-                total_wait = 0
-                interval = 1
-                while total_wait < CALL_KEEP_ALIVE:
-                    state = getattr(pc, "iceConnectionState", None)
-                    if state == "connected":
-                        try:
-                            r = requests.post(
-                                f"{GRAPH}/{PHONE_NUMBER_ID}/calls",
-                                headers={"Authorization": f"Bearer {WHATSAPP_TOKEN}"},
-                                json={
-                                    "messaging_product": "whatsapp",
-                                    "call_id": call_id,
-                                    "action": "accept",
-                                    "session": {"sdp_type": "answer", "sdp": pc.localDescription.sdp}
-                                },
-                                timeout=10,
-                            )
-                            print(f"[handle_call] accept response: {r.status_code}")
-                            await log_firestore(call_id, "accept", {"status": r.status_code})
-                        except Exception as e:
-                            print(f"[handle_call] accept POST failed: {e}")
-                            await log_firestore(call_id, "accept_error", {"error": str(e)})
-                        return
-                    await asyncio.sleep(interval)
-                    total_wait += interval
-                print(f"[handle_call] ICE did not connect after {CALL_KEEP_ALIVE}s")
-                await log_firestore(call_id, "accept_timeout", {"waited": CALL_KEEP_ALIVE})
+        # ---------- FALLBACK ----------
+        fake_sdp = make_fake_sdp()
 
-            await try_accept()
-            await asyncio.sleep(0.5)
-            await pc.close()
-            await log_firestore(call_id, "finished")
-            print("[handle_call] call handling done.")
-            return
+        requests.post(
+            f"{GRAPH}/{PHONE_NUMBER_ID}/calls",
+            headers={"Authorization": f"Bearer {WHATSAPP_TOKEN}"},
+            json={
+                "messaging_product": "whatsapp",
+                "call_id": call_id,
+                "action": "pre_accept",
+                "session": {"sdp_type": "answer", "sdp": fake_sdp},
+            },
+            timeout=10,
+        )
 
-        # Fallback - no aiortc or no SDP
-        fallback_sdp = make_fake_sdp()
-        print("[handle_call] using fallback SDP")
-        try:
-            r = requests.post(
-                f"{GRAPH}/{PHONE_NUMBER_ID}/calls",
-                headers={"Authorization": f"Bearer {WHATSAPP_TOKEN}"},
-                json={
-                    "messaging_product": "whatsapp",
-                    "call_id": call_id,
-                    "action": "pre_accept",
-                    "session": {"sdp_type": "answer", "sdp": fallback_sdp}
-                },
-                timeout=10,
-            )
-            await log_firestore(call_id, "fallback_pre_accept", {"status": r.status_code})
-        except Exception as e:
-            await log_firestore(call_id, "fallback_pre_accept_error", {"error": str(e)})
+        requests.post(
+            f"{GRAPH}/{PHONE_NUMBER_ID}/calls",
+            headers={"Authorization": f"Bearer {WHATSAPP_TOKEN}"},
+            json={
+                "messaging_product": "whatsapp",
+                "call_id": call_id,
+                "action": "accept",
+                "session": {"sdp_type": "answer", "sdp": fake_sdp},
+            },
+            timeout=10,
+        )
 
-        await asyncio.sleep(0.5)
+        await log_firestore(call_id, "completed_fallback")
 
-        try:
-            r = requests.post(
-                f"{GRAPH}/{PHONE_NUMBER_ID}/calls",
-                headers={"Authorization": f"Bearer {WHATSAPP_TOKEN}"},
-                json={
-                    "messaging_product": "whatsapp",
-                    "call_id": call_id,
-                    "action": "accept",
-                    "session": {"sdp_type": "answer", "sdp": fallback_sdp}
-                },
-                timeout=10,
-            )
-            await log_firestore(call_id, "fallback_accept", {"status": r.status_code})
-        except Exception as e:
-            await log_firestore(call_id, "fallback_accept_error", {"error": str(e)})
-
-        await log_firestore(call_id, "finished_fallback")
-    except Exception as exc:
-        print(f"[handle_call] unexpected error: {exc}")
+    except Exception as e:
+        print("Fatal handler error:", e)
         traceback.print_exc()
-        await log_firestore(call.get("id"), "error", {"exception": str(exc)})
 
+
+# ---------- WEBHOOK ----------
 async def webhook(request):
     try:
-        payload = await request.json()
-    except Exception:
-        text = await request.text()
-        print("[webhook] invalid JSON body:", text[:2000])
-        return web.Response(text="invalid json", status=400)
+        body = await request.json()
+    except:
+        return web.Response(text="bad json", status=400)
 
-    print("[webhook] payload received:")
-    print(json.dumps(payload, indent=2)[:2000])
+    print("[WEBHOOK]", body)
 
-    # Extract calls array
-    calls = None
-    if isinstance(payload, dict):
-        if payload.get("event") or payload.get("id"):
-            calls = [payload]
-        else:
-            entry = payload.get("entry") or []
-            if entry and isinstance(entry, list):
-                try:
-                    calls = entry[0]["changes"][0]["value"].get("calls")
-                except Exception:
-                    calls = None
+    calls = body.get("calls") or body.get("entry", [{}])[0].get("changes", [{}])[0].get("value", {}).get("calls")
 
     if not calls:
-        print("[webhook] no call object found; ack and return")
         return web.Response(text="no-call", status=200)
 
     for call in calls:
@@ -220,20 +180,263 @@ async def webhook(request):
 
     return web.Response(text="ok", status=200)
 
+
 async def health(request):
-    return web.Response(text="python-call-agent OK", status=200)
+    return web.Response(text="OK", status=200)
+
 
 def create_app():
     app = web.Application()
     app.router.add_get("/", health)
     app.router.add_post("/", webhook)
-    app.router.add_post("/run", webhook)
     return app
+
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 8080))
-    print(f"Starting python call agent on port {port}")
+    print("Python Call Agent Booted → Listening on port", port)
     web.run_app(create_app(), host="0.0.0.0", port=port)
+
+
+
+
+
+
+
+# # python_service.py
+# import os
+# import json
+# import asyncio
+# import traceback
+# import requests
+# from aiohttp import web
+# from google.cloud import firestore  # pip install google-cloud-firestore
+
+# WHATSAPP_TOKEN = os.getenv("WHATSAPP_TOKEN", "EAAzIG7LU0TYBO4EsZCcETbfEgZAW79NJFQZCh3RJ5Y182q0CQVj0ELcdoEkgZCf3blKWbuCLdKtZBIKEOZAbh6x0RpdcXPEoSl2wxe8D1OUjpEvyz2O3eakLUqHQDLXbie3wcy9QJuFHaVLjxa1SHmutNdZCQvxM4MFqZB6ZCUdWdUJ8CueRn4LKZClBBZABcuqPHZAOHgZDZD").strip()
+# PHONE_NUMBER_ID = os.getenv("PHONE_NUMBER_ID", "732355239960210").strip()
+# GRAPH = "https://graph.facebook.com/v23.0"
+
+# # Firestore client
+# db = firestore.Client()
+
+# # Public audio URL fallback (silent short audio)
+# AUDIO_URL = "https://samplelib.com/lib/preview/wav/sample-3s.wav"
+
+# # Max time to keep call alive (seconds)
+# CALL_KEEP_ALIVE = 50
+
+# def make_fake_sdp():
+#     return (
+#         "v=0\r\n"
+#         "o=- 0 0 IN IP4 0.0.0.0\r\n"
+#         "s=python-agent\r\n"
+#         "t=0 0\r\n"
+#         "m=audio 9 RTP/AVP 0\r\n"
+#         "c=IN IP4 0.0.0.0\r\n"
+#     )
+
+# async def log_firestore(call_id, event, extra=None):
+#     try:
+#         doc = {
+#             "call_id": call_id,
+#             "event": event,
+#             "extra": extra or {},
+#             "timestamp": firestore.SERVER_TIMESTAMP
+#         }
+#         await asyncio.to_thread(db.collection("whatsappCalls").add, doc)
+#     except Exception as e:
+#         print(f"[log_firestore] error: {e}")
+
+# async def handle_call(call):
+#     try:
+#         if not isinstance(call, dict):
+#             print("Bad payload (not dict).")
+#             return
+
+#         event = call.get("event")
+#         call_id = call.get("id") or call.get("call_id") or call.get("waba_call_id")
+#         session = call.get("session", {}) or {}
+#         print(f"[handle_call] event: {event} id: {call_id}")
+#         await log_firestore(call_id, f"received_{event}", call)
+
+#         if event not in ("connect", "offer", "incoming"):
+#             print(f"[handle_call] ignoring event: {event}")
+#             return
+
+#         incoming_sdp = session.get("sdp") or session.get("offer") or None
+
+#         use_aiortc = False
+#         try:
+#             from aiortc import RTCPeerConnection, RTCSessionDescription, MediaPlayer
+#             use_aiortc = True
+#             print("[handle_call] aiortc imported successfully.")
+#         except Exception as e:
+#             print(f"[handle_call] aiortc not available, fallback: {e}")
+
+#         if use_aiortc and incoming_sdp:
+#             pc = RTCPeerConnection()
+
+#             try:
+#                 player = MediaPlayer(AUDIO_URL)
+#                 if player.audio:
+#                     pc.addTrack(player.audio)
+#                     print("[handle_call] added MediaPlayer audio track")
+#             except Exception as e:
+#                 print(f"[handle_call] MediaPlayer init failed: {e}")
+
+#             offer = RTCSessionDescription(sdp=incoming_sdp, type="offer")
+#             await pc.setRemoteDescription(offer)
+#             answer = await pc.createAnswer()
+#             await pc.setLocalDescription(answer)
+#             local_sdp = pc.localDescription.sdp
+#             print(f"[handle_call] generated SDP answer length: {len(local_sdp)}")
+
+#             # Pre-accept
+#             try:
+#                 r = requests.post(
+#                     f"{GRAPH}/{PHONE_NUMBER_ID}/calls",
+#                     headers={"Authorization": f"Bearer {WHATSAPP_TOKEN}"},
+#                     json={
+#                         "messaging_product": "whatsapp",
+#                         "call_id": call_id,
+#                         "action": "pre_accept",
+#                         "session": {"sdp_type": "answer", "sdp": local_sdp}
+#                     },
+#                     timeout=10,
+#                 )
+#                 print(f"[handle_call] pre_accept response: {r.status_code}")
+#                 await log_firestore(call_id, "pre_accept", {"status": r.status_code})
+#             except Exception as e:
+#                 print(f"[handle_call] pre_accept POST failed: {e}")
+#                 await log_firestore(call_id, "pre_accept_error", {"error": str(e)})
+
+#             # Accept once ICE connected or timeout
+#             async def try_accept():
+#                 total_wait = 0
+#                 interval = 1
+#                 while total_wait < CALL_KEEP_ALIVE:
+#                     state = getattr(pc, "iceConnectionState", None)
+#                     if state == "connected":
+#                         try:
+#                             r = requests.post(
+#                                 f"{GRAPH}/{PHONE_NUMBER_ID}/calls",
+#                                 headers={"Authorization": f"Bearer {WHATSAPP_TOKEN}"},
+#                                 json={
+#                                     "messaging_product": "whatsapp",
+#                                     "call_id": call_id,
+#                                     "action": "accept",
+#                                     "session": {"sdp_type": "answer", "sdp": pc.localDescription.sdp}
+#                                 },
+#                                 timeout=10,
+#                             )
+#                             print(f"[handle_call] accept response: {r.status_code}")
+#                             await log_firestore(call_id, "accept", {"status": r.status_code})
+#                         except Exception as e:
+#                             print(f"[handle_call] accept POST failed: {e}")
+#                             await log_firestore(call_id, "accept_error", {"error": str(e)})
+#                         return
+#                     await asyncio.sleep(interval)
+#                     total_wait += interval
+#                 print(f"[handle_call] ICE did not connect after {CALL_KEEP_ALIVE}s")
+#                 await log_firestore(call_id, "accept_timeout", {"waited": CALL_KEEP_ALIVE})
+
+#             await try_accept()
+#             await asyncio.sleep(0.5)
+#             await pc.close()
+#             await log_firestore(call_id, "finished")
+#             print("[handle_call] call handling done.")
+#             return
+
+#         # Fallback - no aiortc or no SDP
+#         fallback_sdp = make_fake_sdp()
+#         print("[handle_call] using fallback SDP")
+#         try:
+#             r = requests.post(
+#                 f"{GRAPH}/{PHONE_NUMBER_ID}/calls",
+#                 headers={"Authorization": f"Bearer {WHATSAPP_TOKEN}"},
+#                 json={
+#                     "messaging_product": "whatsapp",
+#                     "call_id": call_id,
+#                     "action": "pre_accept",
+#                     "session": {"sdp_type": "answer", "sdp": fallback_sdp}
+#                 },
+#                 timeout=10,
+#             )
+#             await log_firestore(call_id, "fallback_pre_accept", {"status": r.status_code})
+#         except Exception as e:
+#             await log_firestore(call_id, "fallback_pre_accept_error", {"error": str(e)})
+
+#         await asyncio.sleep(0.5)
+
+#         try:
+#             r = requests.post(
+#                 f"{GRAPH}/{PHONE_NUMBER_ID}/calls",
+#                 headers={"Authorization": f"Bearer {WHATSAPP_TOKEN}"},
+#                 json={
+#                     "messaging_product": "whatsapp",
+#                     "call_id": call_id,
+#                     "action": "accept",
+#                     "session": {"sdp_type": "answer", "sdp": fallback_sdp}
+#                 },
+#                 timeout=10,
+#             )
+#             await log_firestore(call_id, "fallback_accept", {"status": r.status_code})
+#         except Exception as e:
+#             await log_firestore(call_id, "fallback_accept_error", {"error": str(e)})
+
+#         await log_firestore(call_id, "finished_fallback")
+#     except Exception as exc:
+#         print(f"[handle_call] unexpected error: {exc}")
+#         traceback.print_exc()
+#         await log_firestore(call.get("id"), "error", {"exception": str(exc)})
+
+# async def webhook(request):
+#     try:
+#         payload = await request.json()
+#     except Exception:
+#         text = await request.text()
+#         print("[webhook] invalid JSON body:", text[:2000])
+#         return web.Response(text="invalid json", status=400)
+
+#     print("[webhook] payload received:")
+#     print(json.dumps(payload, indent=2)[:2000])
+
+#     # Extract calls array
+#     calls = None
+#     if isinstance(payload, dict):
+#         if payload.get("event") or payload.get("id"):
+#             calls = [payload]
+#         else:
+#             entry = payload.get("entry") or []
+#             if entry and isinstance(entry, list):
+#                 try:
+#                     calls = entry[0]["changes"][0]["value"].get("calls")
+#                 except Exception:
+#                     calls = None
+
+#     if not calls:
+#         print("[webhook] no call object found; ack and return")
+#         return web.Response(text="no-call", status=200)
+
+#     for call in calls:
+#         asyncio.create_task(handle_call(call))
+
+#     return web.Response(text="ok", status=200)
+
+# async def health(request):
+#     return web.Response(text="python-call-agent OK", status=200)
+
+# def create_app():
+#     app = web.Application()
+#     app.router.add_get("/", health)
+#     app.router.add_post("/", webhook)
+#     app.router.add_post("/run", webhook)
+#     return app
+
+# if __name__ == "__main__":
+#     port = int(os.getenv("PORT", 8080))
+#     print(f"Starting python call agent on port {port}")
+#     web.run_app(create_app(), host="0.0.0.0", port=port)
 
 
 
