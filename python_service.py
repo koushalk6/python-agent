@@ -15,7 +15,7 @@ PHONE_NUMBER_ID = "732355239960210"
 GRAPH = "https://graph.facebook.com/v20.0"
 
 # Public audio URL fallback (optional)
-AUDIO_URL = "https://www2.cs.uic.edu/~i101/SoundFiles/StarWars3.wav"
+AUDIO_URL = "https://samplelib.com/lib/preview/wav/sample-3s.wav"
 
 def make_fake_sdp():
     # Minimal fallback SDP for testing without aiortc
@@ -241,7 +241,7 @@ if __name__ == "__main__":
 # GRAPH = "https://graph.facebook.com/v20.0"
 
 # # Public audio URL used when aiortc is NOT available (informational)
-# AUDIO_URL = "https://www2.cs.uic.edu/~i101/SoundFiles/StarWars3.wav"
+# AUDIO_URL = "https://samplelib.com/lib/preview/wav/sample-3s.wav"
 
 
 # def make_fake_sdp():
@@ -498,7 +498,7 @@ if __name__ == "__main__":
 # # GRAPH = "https://graph.facebook.com/v20.0"
 
 # # # Simple public audio URL (only informational — actual media via WebRTC SDP in real flow)
-# # AUDIO_URL = "https://www2.cs.uic.edu/~i101/SoundFiles/StarWars3.wav"
+# # AUDIO_URL = "https://samplelib.com/lib/preview/wav/sample-3s.wav"
 
 # # # -------------------------
 # # # Utility: generate minimal fake SDP
