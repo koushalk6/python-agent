@@ -1,7 +1,6 @@
-aiohttp==3.9.5
-requests==2.32.3
-python-dotenv==1.0.
-
+aiohttp
+requests
 aiortc
 google-cloud-firestore
 google-auth
+python-dotenv
