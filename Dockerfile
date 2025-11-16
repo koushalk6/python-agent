@@ -1,27 +1,47 @@
-FROM python:3.11-slim
 
+# -----------------------------
+# Base Image
+# -----------------------------
+FROM python:3.10-slim
+
+# Avoid Python buffering
+ENV PYTHONUNBUFFERED=1
+
+# Install system dependencies needed by aiortc
 RUN apt-get update && apt-get install -y \
-    ffmpeg \
     libavdevice-dev \
     libavfilter-dev \
     libavformat-dev \
-    libavcodec-extra \
+    libavcodec-dev \
+    libavutil-dev \
+    libswscale-dev \
+    libswresample-dev \
+    libv4l-dev \
     libopus-dev \
     libvpx-dev \
-    && apt-get clean
+    && rm -rf /var/lib/apt/lists/*
 
+# -----------------------------
+# App Directory
+# -----------------------------
 WORKDIR /app
 
-COPY requirements.txt ./
+# Copy requirements
+COPY requirements.txt .
+
+# Install Python packages
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY python_service.py ./
+# Copy application
+COPY python_service.py .
 
+# Cloud Run will set PORT automatically
 ENV PORT=8080
-EXPOSE 8030
 
+EXPOSE 8080
+
+# Run app
 CMD ["python", "python_service.py"]
-
 
 
 
