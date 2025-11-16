@@ -1,48 +1,44 @@
 
-# -----------------------------
-# Base Image
-# -----------------------------
+# Use Debian slim (stable for building aiortc)
 FROM python:3.10-slim
 
-# Avoid Python buffering
 ENV PYTHONUNBUFFERED=1
+ENV PORT=8080
 
-# Install system dependencies needed by aiortc
-RUN apt-get update && apt-get install -y \
-    libavdevice-dev \
-    libavfilter-dev \
+# Install system libs required by aiortc / av and build tools
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    pkg-config \
+    ffmpeg \
     libavformat-dev \
     libavcodec-dev \
+    libavdevice-dev \
     libavutil-dev \
     libswscale-dev \
     libswresample-dev \
     libv4l-dev \
     libopus-dev \
     libvpx-dev \
+    libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# -----------------------------
-# App Directory
-# -----------------------------
 WORKDIR /app
 
-# Copy requirements
-COPY requirements.txt .
+# Copy requirements first for caching
+COPY requirements.txt /app/requirements.txt
 
-# Install Python packages
-RUN pip install --no-cache-dir -r requirements.txt
+# Install python deps
+RUN pip install --upgrade pip
+RUN pip install --no-cache-dir -r /app/requirements.txt
 
-# Copy application
-COPY python_service.py .
+# Copy app
+COPY . /app
 
-# Cloud Run will set PORT automatically
-ENV PORT=8080
-
+# Expose Cloud Run port
 EXPOSE 8080
 
-# Run app
+# Run the python service (aiohttp web.run_app will bind to $PORT)
 CMD ["python", "python_service.py"]
-
 
 
 
