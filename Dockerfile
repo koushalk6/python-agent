@@ -1,12 +1,10 @@
-
-
-# Use Debian slim (stable for building aiortc)
+# Debian Slim - Best for aiortc
 FROM python:3.10-slim
 
 ENV PYTHONUNBUFFERED=1
 ENV PORT=8080
 
-# Install system libs required by aiortc / av and build tools
+# Install dependencies required by aiortc & av
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     pkg-config \
@@ -25,64 +23,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Copy requirements first (Build cache optimisation)
-COPY requirements.txt /app/requirements.txt
+# Copy and install dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Install Python deps
-RUN pip install --upgrade pip
-RUN pip install --no-cache-dir -r /app/requirements.txt
+# Copy entire app
+COPY . .
 
-# Copy entire project
-COPY . /app
-
-# Expose Cloud Run port
 EXPOSE 8080
 
-# Start the python service
 CMD ["python", "python_service.py"]
-
-
-
-
-
-
-# FROM python:3.11-slim
-
-# RUN apt-get update && apt-get install -y \
-#     ffmpeg \
-#     libavdevice-dev \
-#     libavfilter-dev \
-#     libavformat-dev \
-#     libavcodec-extra \
-#     libopus-dev \
-#     libvpx-dev \
-#     && apt-get clean
-
-# WORKDIR /app
-
-# COPY requirements.txt .
-# RUN pip install --no-cache-dir -r requirements.txt
-
-# COPY python_service.py .
-
-# ENV PORT=8030
-
-# CMD ["python", "python_service.py"]
-
-
-
-# # FROM python:3.10-slim
-
-# # RUN apt-get update && apt-get install -y \
-# #     ffmpeg libavcodec-extra libavdevice-dev libavfilter-dev libavformat-dev \
-# #     libavutil-dev libswresample-dev libswscale-dev && \
-# #     apt-get clean
-
-# # WORKDIR /app
-
-# # COPY requirements.txt .
-# # RUN pip install --no-cache-dir -r requirements.txt
-
-# # COPY python_service.py .
-
-# # CMD ["python", "python_service.py"]
