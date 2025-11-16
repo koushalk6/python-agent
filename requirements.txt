@@ -1,6 +1,6 @@
 aiohttp
 requests
-aiortc==1.4.1
+aiortc
 google-cloud-firestore
 google-auth
 python-dotenv
